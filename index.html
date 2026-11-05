@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="sl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Odpri v Claude</title>
+<style>
+  :root { --bg: #f6f6f4; --panel: #fff; --text: #1d1d1b; --muted: #6b6b66; --line: #e3e3de; --accent: #2f6f4f; --err: #b3261e; --ok: #2f6f4f; --code: #efefea; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --panel: #1f1f1d; --text: #ecece8; --muted: #9a9a93; --line: #33332f; --accent: #6fbf94; --err: #f08a80; --ok: #6fbf94; --code: #2a2a27; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; padding: 16px; }
+  main { width: 100%; max-width: 36rem; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 24px; display: grid; gap: 16px; }
+  h1 { font-size: 1.15rem; margin: 0; }
+  .muted { color: var(--muted); font-size: 0.9rem; }
+  .client { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  .client strong { font-size: 1.05rem; }
+  ol { margin: 0; padding-left: 1.3rem; display: grid; gap: 6px; }
+  code { background: var(--code); padding: 2px 6px; border-radius: 4px; font: 13px ui-monospace, monospace; overflow-wrap: anywhere; }
+  .cmd { display: flex; gap: 8px; align-items: center; margin-top: 4px; flex-wrap: wrap; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
+  details ol { margin-top: 8px; }
+  label { font-weight: 600; display: grid; gap: 6px; }
+  input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: 14px ui-monospace, monospace; }
+  input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { padding: 10px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; cursor: pointer; }
+  button.small { padding: 4px 10px; font-size: 0.85rem; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  a { color: var(--accent); }
+  .err { color: var(--err); }
+  .get { display: grid; gap: 8px; }
+  .tag { background: var(--accent); color: #fff; font-size: 0.75rem; font-weight: 700; padding: 1px 6px; border-radius: 4px; }
+  .bm { display: inline-block; padding: 6px 12px; background: var(--accent); color: #fff; border-radius: 6px; text-decoration: none; font-weight: 700; cursor: grab; }
+  .match { padding: 10px 12px; border-radius: 8px; }
+  .match.good { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); font-weight: 700; }
+  .match.bad { background: color-mix(in srgb, var(--err) 15%, transparent); color: var(--err); font-weight: 700; }
+  .match.warn { background: color-mix(in srgb, #c08000 18%, transparent); color: inherit; font-weight: 700; }
+  .ok { color: var(--ok); }
+</style>
+</head>
+<body>
+<main>
+  <h1>🤖 Odpri plan v Claude</h1>
+  <div class="client" id="client"></div>
+
+  <section class="get">
+    <strong>1. Pridobi JWT stranke</strong>
+    <div><span class="tag">priporočeno</span> Odpri stranko v Lime (link zgoraj), se prijavi v njen račun in tam klikni zaznamek <a class="bm" id="bookmarklet">📋 Lime JWT</a></div>
+    <div class="muted">Zaznamka še nimaš? Povleci zeleni gumb v vrstico z zaznamki (enkrat, <code>Ctrl+Shift+B</code> jo prikaže). Zaznamek kopira JWT in pokaže, za katero stranko je.</div>
+    <details>
+      <summary>Brez zaznamka: prek konzole</summary>
+      <ol>
+        <li>V zavihku Lime odpri konzolo: <code>F12</code> (Mac: <code>⌥⌘J</code>) → <em>Console</em>.</li>
+        <li>Vnesi ukaz in pritisni Enter. JWT se kopira brez narekovajev:
+          <div class="cmd"><code id="cmd"></code><button class="small" id="copyCmd">Kopiraj ukaz</button></div>
+          <div class="muted">Chrome ob prvem lepljenju v konzolo zahteva, da najprej vtipkaš <code>allow pasting</code>.</div>
+        </li>
+      </ol>
+    </details>
+  </section>
+
+  <label>2. Prilepi JWT
+    <input id="jwt" type="password" autocomplete="off" spellcheck="false" placeholder="eyJ…" aria-describedby="match">
+  </label>
+  <div id="match" class="match muted" role="status">Ostane samo v tem brskalniku in gre neposredno v Claude.</div>
+  <div class="row">
+    <button class="primary" id="go" disabled>▶ Odpri v Claude</button>
+    <button id="copy" disabled>Kopiraj prompt</button>
+  </div>
+  <div class="muted" id="status" role="status"></div>
+</main>
+<script>
+  // Data arrives in the #fragment (c = client id, n = deal name, p = prompt), so neither the prompt nor the JWT ever
+  // reaches a server. Only claude:// and the Lime admin are ever opened from here.
+  const params = new URLSearchParams(location.hash.slice(1))
+  const prompt = params.get('p') || ''
+  const clientId = /^\d+$/.test(params.get('c') || '') ? params.get('c') : ''
+  const $ = (id) => document.getElementById(id)
+  const PLACEHOLDER = '[INSERT JWT TOKEN]'
+  const JWT = /^eyJ[\w-]+\.[\w-]+\.[\w-]+$/
+  const CMD = 'copy(localStorage.getItem("usr_token").replace(/"/g, ""))'
+
+  $('cmd').textContent = CMD
+  // Runs only when clicked, only on a lime-booking.com tab; reads the token there and puts it on the clipboard. No network.
+  $('bookmarklet').href =
+    "javascript:(()=>{if(!/(^|\\.)lime-booking\\.com$/.test(location.hostname))return alert('Klikni zaznamek v zavihku Lime.');" +
+    "const t=(localStorage.getItem('usr_token')||'').replace(/\"/g,'');" +
+    "if(!t)return alert('Nisi prijavljen v Lime (ni usr_token).');" +
+    "let c='?';try{c=JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))).clientId}catch(e){}" +
+    "navigator.clipboard.writeText(t).then(()=>alert('JWT za stranko '+c+' je kopiran.'),()=>prompt('JWT za stranko '+c+' (kopiraj):',t))})()"
+  $('bookmarklet').addEventListener('click', (e) => { e.preventDefault(); $('status').textContent = 'Zaznamek povleci v vrstico z zaznamki, ne klikni ga tukaj.' })
+
+  const client = $('client')
+  if (clientId) {
+    const name = document.createElement('strong')
+    name.textContent = `[${clientId}] ${params.get('n') || ''}`
+    const link = document.createElement('a')
+    link.href = `https://app.lime-booking.com/dashboard/admin/client/${clientId}`
+    link.target = '_blank'
+    link.rel = 'noopener noreferrer'
+    link.textContent = 'Odpri stranko v Lime ↗'
+    client.append(name, link)
+  } else {
+    client.innerHTML = '<span class="err">⚠️ Ticket nima client ID-ja (deal z [ID]). Claude se bo ustavil in vprašal za račun.</span>'
+  }
+
+  // What people paste: the console shows the string in quotes, sometimes with "Bearer " or line breaks.
+  const token = () => $('jwt').value.replace(/\s+/g, '').replace(/^Bearer/i, '').replace(/^['"`]+|['"`]+$/g, '')
+  const payload = (t) => {
+    try { return JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) } catch { return undefined }
+  }
+  const dealName = params.get('n') || ''
+  // Returns [ok, level, message]. Blocks a token for another client or an expired one before Claude ever sees it.
+  // The JWT carries only the client id; Claude's SETUP step checks the business name with `client info`.
+  const check = (t) => {
+    if (!t) return [false, 'muted', 'Ostane samo v tem brskalniku in gre neposredno v Claude.']
+    if (!JWT.test(t)) return [false, 'bad', 'To ni videti kot JWT (eyJ….….…).']
+    const p = payload(t)
+    if (!p) return [false, 'bad', 'JWT-ja ni mogoče prebrati.']
+    if (p.exp && p.exp * 1000 < Date.now()) return [false, 'bad', 'JWT je potekel. Osveži Lime in ga kopiraj znova.']
+    const left = p.exp ? ` · velja še ${Math.round((p.exp * 1000 - Date.now()) / 60000)} min` : ''
+    if (p.clientId == null) return [false, 'bad', 'V JWT-ju ni client ID-ja. Je to res Lime JWT stranke?']
+    if (!clientId) return [true, 'warn', `⚠️ JWT je za stranko ${p.clientId}, ticket pa nima client ID-ja. V Lime preveri, da je to prava stranka${left}.`]
+    if (String(p.clientId) !== clientId)
+      return [false, 'bad', `✗ NAPAČEN RAČUN: JWT je za stranko ${p.clientId}, ticket je za [${clientId}] ${dealName}. Prijavi se v pravi račun.`]
+    return [true, 'good', `✓ Pravi račun: JWT stranka ${p.clientId} = ticket [${clientId}] ${dealName}${left}`]
+  }
+
+  const filled = () => prompt.replace(PLACEHOLDER, token())
+  const update = () => {
+    const [ok, level, msg] = check(token())
+    $('go').disabled = $('copy').disabled = !ok || !prompt
+    $('match').textContent = msg
+    $('match').className = `match ${level}`
+    if (!prompt) $('status').textContent = 'Link ne vsebuje prompta.'
+  }
+  $('jwt').addEventListener('input', update)
+  $('copyCmd').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(CMD)
+    $('copyCmd').textContent = 'Kopirano ✓'
+  })
+  $('go').addEventListener('click', async () => {
+    const url = 'claude://claude.ai/new?q=' + encodeURIComponent(filled())
+    // The token is not needed on the clipboard any more; best effort, the browser may refuse.
+    await navigator.clipboard.writeText('').catch(() => {})
+    location.href = url
+    $('status').textContent = 'Odpiram Claude … preveri prompt in pritisni pošlji. Odložišče je počiščeno.'
+  })
+  $('copy').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(filled())
+    $('status').textContent = 'Prompt z JWT je kopiran. Prilepi ga v nov Claude chat.'
+  })
+  update()
+  $('jwt').focus()
+</script>
+</body>
+</html>
